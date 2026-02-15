@@ -262,11 +262,20 @@ int create_raw_socket_l2(const char *interface) {
     return sock;
 }
 
-int create_raw_socket_icmp(void) {
+int create_raw_socket_icmp(const char *interface) {
     int sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
     if (sock < 0) {
         perror("socket ICMP");
         return -1;
+    }
+
+    // Bind to specific interface if provided
+    if (interface) {
+        if (setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, interface, strlen(interface)) < 0) {
+            perror("setsockopt SO_BINDTODEVICE");
+            close(sock);
+            return -1;
+        }
     }
 
     // Set IP_HDRINCL to include custom IP header for per-packet TTL precision
@@ -347,12 +356,18 @@ int get_default_interface(char *iface, size_t len) {
     }
 
     // Find default route (destination = 00000000)
+    // Priority: Physical hardware > virtual/lo
+    char fallback_iface[16] = "";
     while (fgets(line, sizeof(line), fp)) {
         int matches = sscanf(line, "%15s %lx %lx %lx %*d %*d %*d %lx",
                            iface_name, &dest, &gateway, &flags, &mask);
         
         if (matches >= 4 && dest == 0) {
-            // Found default route
+            // Found a default route
+            if (strcmp(iface_name, "lo") == 0) {
+                if (fallback_iface[0] == '\0') strcpy(fallback_iface, iface_name);
+                continue; // Keep looking for a non-lo interface
+            }
             strncpy(iface, iface_name, len - 1);
             iface[len - 1] = '\0';
             found = 1;
@@ -360,41 +375,59 @@ int get_default_interface(char *iface, size_t len) {
         }
     }
 
+    if (!found && fallback_iface[0] != '\0') {
+        strncpy(iface, fallback_iface, len - 1);
+        iface[len - 1] = '\0';
+        found = 1;
+    }
+
     fclose(fp);
-    
-    if (!found) {
-        // Fallback: try to find any active interface
-        fp = fopen("/proc/net/dev", "r");
-        if (fp) {
-            // Skip first two header lines
-            fgets(line, sizeof(line), fp);
-            fgets(line, sizeof(line), fp);
+    return found ? 0 : -1;
+}
+
+int get_all_interfaces(char interfaces[][16], int max_ifaces) {
+    FILE *fp = fopen("/proc/net/dev", "r");
+    if (!fp) return -1;
+
+    char line[256];
+    int count = 0;
+    int has_lo = 0;
+
+    // Skip first two header lines
+    fgets(line, sizeof(line), fp);
+    fgets(line, sizeof(line), fp);
+
+    while (fgets(line, sizeof(line), fp) && count < max_ifaces) {
+        char *colon = strchr(line, ':');
+        if (colon) {
+            char *name_start = line;
+            while (*name_start == ' ' || *name_start == '\t') name_start++;
             
-            while (fgets(line, sizeof(line), fp)) {
-                char *colon = strchr(line, ':');
-                if (colon) {
-                    char *name_start = line;
-                    while (*name_start == ' ' || *name_start == '\t') name_start++;
-                    
-                    size_t name_len = colon - name_start;
-                    if (name_len > 0 && name_len < len) {
-                        strncpy(iface_name, name_start, name_len);
-                        iface_name[name_len] = '\0';
-                        
-                        // Skip loopback
-                        if (strcmp(iface_name, "lo") != 0) {
-                            strncpy(iface, iface_name, len - 1);
-                            iface[len - 1] = '\0';
-                            found = 1;
-                            break;
-                        }
-                    }
+            size_t name_len = colon - name_start;
+            if (name_len > 0 && name_len < 16) {
+                char ifname[16];
+                strncpy(ifname, name_start, name_len);
+                ifname[name_len] = '\0';
+                
+                if (strcmp(ifname, "lo") == 0) {
+                    has_lo = 1;
+                    continue; // lo added later to ensure hardware priority
                 }
+
+                strncpy(interfaces[count], ifname, 15);
+                interfaces[count][15] = '\0';
+                count++;
             }
-            fclose(fp);
         }
     }
 
-    return found ? 0 : -1;
+    // Add Loopback at the end for auditing
+    if (has_lo && count < max_ifaces) {
+        strcpy(interfaces[count], "lo");
+        count++;
+    }
+
+    fclose(fp);
+    return count;
 }
 

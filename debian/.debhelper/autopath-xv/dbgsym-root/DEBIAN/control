@@ -4,9 +4,9 @@ Version: 1.0.0-1
 Auto-Built-Package: debug-symbols
 Architecture: amd64
 Maintainer: Your Name <wiratamareyhan85@gmail.com>
-Installed-Size: 27
+Installed-Size: 28
 Depends: autopath-xv (= 1.0.0-1)
 Section: debug
 Priority: optional
 Description: debug symbols for autopath-xv
-Build-Ids: d343ca927ad0a8f04f28c49ad99fb4e2f45da5cd
+Build-Ids: 458e2812f2476b46c8c711eb31e2b7752e91f6cd

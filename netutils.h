@@ -106,7 +106,7 @@ int create_raw_socket_l2(const char *interface);
 /**
  * Create and configure a raw socket for ICMP
  */
-int create_raw_socket_icmp(void);
+int create_raw_socket_icmp(const char *interface);
 
 /**
  * Send a raw packet through Layer 2 socket
@@ -140,5 +140,10 @@ int get_default_interface(char *iface, size_t len);
  */
 int build_udp_packet(uint8_t *buffer, uint32_t src_ip, uint32_t dst_ip, 
                      uint16_t src_port, uint16_t dst_port, uint8_t ttl);
+
+/**
+ * Get a list of all network interfaces
+ */
+int get_all_interfaces(char interfaces[][16], int max_ifaces);
 
 #endif // NETUTILS_H

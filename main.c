@@ -110,17 +110,44 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Auto-detect interface if not specified
+    // Auto-detect interface or Shotgun mode
+    char interfaces[16][16];
+    int iface_count = 0;
+    char target_iface[16] = "";
+
     if (!interface_specified) {
-        if (get_default_interface(interface, sizeof(interface)) < 0) {
-            fprintf(stderr, "Error: Failed to auto-detect network interface.\n");
-            fprintf(stderr, "Please specify interface manually with -i <interface>\n");
-            fprintf(stderr, "Available interfaces: ip link show\n");
+        iface_count = get_all_interfaces(interfaces, 16);
+        if (iface_count <= 0) {
+            fprintf(stderr, "Error: No network interfaces detected.\n");
             return 1;
         }
-        if (config.debug) {
-            printf("[DEBUG] Auto-detected interface: %s\n", interface);
+
+        printf(" \033[1;36m[*]\033[0m Path Audit: Probing %d candidate interfaces...\n", iface_count);
+        
+        for (int i = 0; i < iface_count; i++) {
+            if (strcmp(interfaces[i], "lo") == 0) {
+                printf("  \033[1;31m[!]\033[0m Interface lo: \033[1;31mFAILED\033[0m (Loopback trap/redirect detected)\n");
+                continue;
+            }
+
+            int test_sock = create_raw_socket_icmp(interfaces[i]);
+            if (test_sock < 0) {
+                printf("  \033[1;31m[!]\033[0m Interface %s: \033[1;31mFAILED\033[0m (Socket creation failed - Check connection)\n", interfaces[i]);
+                continue;
+            }
+            close(test_sock);
+
+            printf("  \033[1;32m[+]\033[0m Interface %s: \033[1;32mSUCCESS\033[0m (Hardware path active)\n", interfaces[i]);
+            if (target_iface[0] == '\0') strncpy(target_iface, interfaces[i], 15);
         }
+        
+        if (target_iface[0] == '\0') {
+             fprintf(stderr, "\nError: All probed interfaces failed. No path to destination found.\n");
+             return 1;
+        }
+        printf(" \033[1;36m[*]\033[0m Using \033[1;32m%s\033[0m for trace.\n", target_iface);
+    } else {
+        strncpy(target_iface, interface, 15);
     }
 
     // Check if running as root
@@ -131,12 +158,12 @@ int main(int argc, char *argv[]) {
 
     if (config.debug) {
         printf("[DEBUG] Starting autopath-xv v%s\n", VERSION);
-        printf("[DEBUG] Interface: %s\n", interface);
+        printf("[DEBUG] Interface: %s\n", target_iface);
         printf("[DEBUG] Target: %s\n", config.target_ip);
     }
     
     // Run the traceroute
-    int result = run_traceroute(&config, interface);
+    int result = run_traceroute(&config, target_iface);
     
     if (result < 0) {
         fprintf(stderr, "Traceroute failed\n");

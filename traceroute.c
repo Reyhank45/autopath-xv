@@ -99,6 +99,12 @@ void *sender_thread_func(void *arg) {
             
             if (sendto(ctx->sock_icmp, packet, pkt_len, 0, 
                        (struct sockaddr *)&dest_addr, sizeof(dest_addr)) < 0) {
+                if (errno == ENETUNREACH || errno == EHOSTUNREACH) {
+                    snprintf(ctx->all_hops[ttl].error_msg, sizeof(ctx->all_hops[ttl].error_msg), 
+                             "Route Error: %s", (errno == ENETUNREACH) ? "Unreachable" : "Host Unreachable");
+                    ctx->done = 1;
+                    break;
+                }
             }
             // Controlled Stagger: 500us to balance speed and router response
             usleep(500); 
@@ -227,7 +233,10 @@ int run_traceroute(AutopathConfig *config, const char *interface) {
         return -1;
     }
 
-    int sock_icmp = create_raw_socket_icmp();
+    // Only use strict interface binding for bypass/advanced modes
+    // This allows standard mode to 'fail' correctly when testing broken routes
+    const char *bind_interface = (config->layer2_enabled || config->use_arp || config->smart_mode) ? interface : NULL;
+    int sock_icmp = create_raw_socket_icmp(bind_interface);
     if (sock_icmp < 0) {
         fprintf(stderr, "Failed to create ICMP socket (need root/CAP_NET_RAW)\n");
         return -1;
@@ -251,6 +260,9 @@ int run_traceroute(AutopathConfig *config, const char *interface) {
         }
     }
 
+    if (config->layer2_enabled || config->use_arp || config->smart_mode) {
+        printf("\033[1;33m[!] Advanced Bypass Active: Ignoring local routing table redirects.\033[0m\n");
+    }
     printf("Path Tracing to %s, max %d hops:\n", config->target_ip, MAX_HOPS);
 
     HopInfo all_hops[MAX_HOPS + 1];
@@ -345,6 +357,9 @@ int run_traceroute(AutopathConfig *config, const char *interface) {
                 }
                 if (ctx.show_animation) printf("\r\033[K"); // Instant clear
                 print_hop(&all_hops[h], config);
+                
+                // Removed real-time loop termination - ISP tunnels often have same-IP hops
+                // We only flag visually now to avoid stopping healthy traces.
                 last_printed = h;
                 if (ctx.destination_reached && h >= ctx.target_ttl) {
                     ctx.done = 1;
@@ -381,6 +396,26 @@ int run_traceroute(AutopathConfig *config, const char *interface) {
         if (last_ip != src_ip) {
             printf("\n--- Smart Mode Analysis ---\n");
             query_router_arp_table(last_ip, dst_ip, config);
+        }
+    } else if (!ctx.destination_reached && !ctx.done) {
+        // Only show if not manually stopped
+    }
+    
+    if (!ctx.destination_reached) {
+        int last_responding_hop = 0;
+        for (int i = 1; i <= MAX_HOPS; i++) {
+            if (all_hops[i].reached) last_responding_hop = i;
+        }
+        
+        printf("\n\033[1;31m[!!!] PATH BREAKDOWN DETECTED AFTER HOP %d\033[0m\n", last_responding_hop);
+        if (last_responding_hop == 0) {
+            printf("Check local connection.");
+            if (config->layer2_enabled || config->use_arp || config->smart_mode) {
+                printf(" (Note: Bypass flags were active and may have ignored local routing redirects)");
+            }
+            printf("\n");
+        } else {
+            printf("The link between Hop %d and Hop %d is failing to pass traffic.\n", last_responding_hop, last_responding_hop + 1);
         }
     }
 
@@ -481,26 +516,53 @@ int parse_icmp_response(uint8_t *buffer, int len, uint16_t id, HopInfo *hop) {
 
 void print_hop(HopInfo *hop, AutopathConfig *config) {
     if (hop->hop_num <= 0) return;
+
+    static uint32_t path_history[MAX_HOPS + 1];
+    if (hop->hop_num == 1) {
+        memset(path_history, 0, sizeof(path_history));
+    }
+
     printf("%2d  ", hop->hop_num);
 
     if (hop->reached) {
         uint32_t last_ip = 0;
+        int is_loop = 0;
         for (int i = 0; i < config->num_probes; i++) {
             if (hop->rtt_ms[i] >= 0) {
+                if (hop->hop_num > 2) {
+                    for (int h = 1; h < hop->hop_num - 1; h++) {
+                        if (path_history[h] && path_history[h] == hop->ip_addr[i] && path_history[h+1] != hop->ip_addr[i]) {
+                            is_loop = 1;
+                            break;
+                        }
+                    }
+                }
+
                 if (hop->ip_addr[i] != last_ip) {
                     char ip_str[INET_ADDRSTRLEN];
                     inet_ntop(AF_INET, &hop->ip_addr[i], ip_str, sizeof(ip_str));
                     printf("%-15s ", ip_str);
                     last_ip = hop->ip_addr[i];
+                    path_history[hop->hop_num] = hop->ip_addr[i];
                 }
                 printf(" %7.3f ms ", hop->rtt_ms[i]);
             } else {
                 printf("      *      ");
             }
         }
+        if (is_loop) printf(" \033[1;33m[ROUTING LOOP]\033[0m");
         if (hop->error_msg[0]) printf("  %s", hop->error_msg);
     } else {
         for (int i = 0; i < config->num_probes; i++) printf("       *      ");
+        
+        static int break_shown = 0;
+        if (hop->hop_num == 1) break_shown = 0;
+        
+        if (!break_shown && hop->hop_num > 1) {
+             printf(" \033[1;31m[LINK BROKEN]\033[0m");
+             break_shown = 1;
+        }
+        
         if (hop->error_msg[0]) printf("  %s", hop->error_msg);
     }
     printf("\n");
