@@ -1,18 +1,24 @@
 Source: autopath-xv
 Section: net
 Priority: optional
-Maintainer: Your Name <wiratamareyhan85@gmail.com>
+Maintainer: Reyhan <reyhank45@github.com>
 Build-Depends: debhelper-compat (= 13), gcc, make
-Standards-Version: 4.6.0
+Standards-Version: 4.5.0
 Homepage: https://github.com/reyhank45/autopath-xv
 
 Package: autopath-xv
-Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, libsnmp40
-Recommends: libcap2-bin
-Suggests: snmpd
-Description: Advanced network path discovery tool
- autopath-xv is an advanced network path discovery tool that combines
+Architecture: amd64 arm64
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Advanced network path discovery and diagnostic tool
+ autopath-xv is a high-performance network traceroute utility designed 
+ for sub-second path discovery. It bridges the gap between Layer 3 
+ routing and Layer 2 link-layer analysis, supporting:
+ .
+  * Sub-600ms network-latency-bound execution.
+  * Intelligent Path Auditing (Shotgun interface discovery).
+  * Layer 2 MAC address resolution per hop.
+  * Professional path breakdown and routing loop diagnostics.
+  * Advanced Smart Mode for router ARP table analysis.
  Layer 3 traceroute with Layer 2 MAC-level path tracing.
  .
  Features:

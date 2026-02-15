@@ -1,3 +1,13 @@
+/**
+ * @file traceroute.c
+ * @brief Core multi-threaded traceroute engine.
+ * 
+ * Implements the "Shotgun" style traceroute engine using three main threads:
+ * 1. Sender: Sends all probes as fast as possible with minimal delay.
+ * 2. Receiver: Uses epoll for high-performance non-blocking packet capture.
+ * 3. Printer: Coordinates display and real-time path analysis.
+ */
+
 #include "traceroute.h"
 #include "netutils.h"
 #include "config.h"
@@ -17,11 +27,14 @@
 #include <errno.h>
 #include <sys/ioctl.h>
 
-// Animation thread function for a high-speed, full-width "Laser Bouncer"
+/**
+ * @brief Animation thread for the high-speed "Laser Bouncer" visual effect.
+ * Provides real-time feedback during the sub-second trace execution.
+ */
 void *animation_thread_func(void *arg) {
     ThreadContext *ctx = (ThreadContext *)arg;
     struct winsize w;
-    int col_width = 80; // Default
+    int col_width = 80;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 && w.ws_col > 10) {
         col_width = w.ws_col;
     }
@@ -58,7 +71,7 @@ void *animation_thread_func(void *arg) {
             dir *= -1;
         }
         
-        usleep(8000); // 8ms - Ultra Smooth 125FPS
+        usleep(8000); // 125 FPS refresh rate
     }
     
     pthread_mutex_lock(&ctx->mutex);
@@ -68,7 +81,10 @@ void *animation_thread_func(void *arg) {
     return NULL;
 }
 
-// Thread function for sending probes
+/**
+ * @brief Sender Thread: Transmits ICMP/UDP probes at maximum speed.
+ * Uses a microscopic 500us stagger to prevent ICMP rate-limiting artifacts.
+ */
 void *sender_thread_func(void *arg) {
     ThreadContext *ctx = (ThreadContext *)arg;
     int num_probes = ctx->config->num_probes;
@@ -87,7 +103,6 @@ void *sender_thread_func(void *arg) {
             int pkt_len;
 
             if (use_udp) {
-                // For UDP, we vary destination port for entropy 33434 + seq
                 dest_addr.sin_port = htons(33434 + seq);
                 pkt_len = build_udp_packet(packet, ctx->src_ip, ctx->dst_ip, 
                                           33434 + probe, 33434 + seq, ttl);
@@ -106,14 +121,17 @@ void *sender_thread_func(void *arg) {
                     break;
                 }
             }
-            // Controlled Stagger: 500us to balance speed and router response
+            // microscopic stagger to maintain router veracity
             usleep(500); 
         }
     }
     return NULL;
 }
 
-// Thread function for receiving responses
+/**
+ * @brief Receiver Thread: Listens for ICMP responses via epoll.
+ * Performs real-time protocol-agnostic response parsing (TTL Exceeded vs Destination Reached).
+ */
 void *receiver_thread_func(void *arg) {
     ThreadContext *ctx = (ThreadContext *)arg;
     int epoll_fd = epoll_create1(0);
@@ -150,17 +168,13 @@ void *receiver_thread_func(void *arg) {
                     resp_seq = ntohs(icmp->un.echo.sequence);
                     resp_id = ntohs(icmp->un.echo.id);
                 } else if (icmp->type == ICMP_TIME_EXCEEDED || icmp->type == ICMP_DEST_UNREACH) {
-                    // Extract original packet from ICMP quote
+                    // Extract original packet from ICMP quote for verification
                     struct iphdr *orig_ip = (struct iphdr *)(recv_buffer + ip_hdr_len + 8);
                     int orig_ip_hdr_len = orig_ip->ihl * 4;
                     
                     if (is_udp) {
-                        // Original UDP header is right after encapsulated IP header
                         uint16_t *orig_udp_ports = (uint16_t *)((uint8_t *)orig_ip + orig_ip_hdr_len);
-                        // The sequence number was stored in the Destination Port (33434 + seq)
                         resp_seq = ntohs(orig_udp_ports[1]) - 33434;
-                        // Probe ID logic for UDP relies on ports, but for now we skip ID match for UDP 
-                        // as Port Range is our verification
                         resp_id = ctx->id + (ntohs(orig_udp_ports[0]) - 33434);
                     } else {
                         struct icmphdr *orig_icmp = (struct icmphdr *)((uint8_t *)orig_ip + orig_ip_hdr_len);
@@ -171,7 +185,7 @@ void *receiver_thread_func(void *arg) {
                     continue;
                 }
 
-                // Verify ID against our probe range (probe ID was varied [id, id+probes])
+                // Verify the response belongs to our current process and probe ID range
                 if (resp_id < ctx->id || resp_id >= ctx->id + ctx->config->num_probes) continue;
 
                 int h_idx = (resp_seq >> 8) & 0xFF;
@@ -180,12 +194,6 @@ void *receiver_thread_func(void *arg) {
                 if (h_idx >= 1 && h_idx <= MAX_HOPS && p_idx >= 0 && p_idx < ctx->config->num_probes) {
                     pthread_mutex_lock(&ctx->mutex);
                     if (ctx->all_hops[h_idx].rtt_ms[p_idx] < 0) {
-                        HopInfo temp_hop;
-                        memset(&temp_hop, 0, sizeof(temp_hop));
-                        
-                        // Parse logic: Extract Source IP from ICMP error
-                        temp_hop.ip_addr[0] = ip->saddr;
-                        
                         double rtt = (end_time.tv_sec - ctx->all_hops[h_idx].start_times[p_idx].tv_sec) * 1000.0 +
                                      (end_time.tv_nsec - ctx->all_hops[h_idx].start_times[p_idx].tv_nsec) / 1000000.0;
                         
@@ -194,7 +202,7 @@ void *receiver_thread_func(void *arg) {
                         ctx->all_hops[h_idx].ip_addr[p_idx] = ip->saddr;
                         ctx->all_hops[h_idx].reached = 1;
                         
-                        // Check if this IP is the destination (Protocol Agnostic)
+                        // Check if we hit the actual target or terminal destination
                         if (ip->saddr == ctx->dst_ip || 
                            (icmp->type == ICMP_ECHOREPLY) || 
                            (icmp->type == ICMP_DEST_UNREACH && icmp->code == ICMP_PORT_UNREACH)) {
@@ -206,7 +214,7 @@ void *receiver_thread_func(void *arg) {
                             }
                             if (h_idx < ctx->target_ttl) ctx->target_ttl = h_idx;
                         }
-                        // Signal printer to wakeup instantly
+                        // Alert the printer loop to wake up immediately
                         pthread_cond_signal(&ctx->cond);
                     }
                     pthread_mutex_unlock(&ctx->mutex);
@@ -218,7 +226,9 @@ void *receiver_thread_func(void *arg) {
     return NULL;
 }
 
-
+/**
+ * @brief Orchestrates the multi-threaded traceroute operation.
+ */
 int run_traceroute(AutopathConfig *config, const char *interface) {
     struct in_addr local_ip_addr;
     if (get_local_ip(interface, &local_ip_addr) < 0) {
@@ -233,8 +243,7 @@ int run_traceroute(AutopathConfig *config, const char *interface) {
         return -1;
     }
 
-    // Only use strict interface binding for bypass/advanced modes
-    // This allows standard mode to 'fail' correctly when testing broken routes
+    // Advanced modes (L2/Bypass) use specific interface binding
     const char *bind_interface = (config->layer2_enabled || config->use_arp || config->smart_mode) ? interface : NULL;
     int sock_icmp = create_raw_socket_icmp(bind_interface);
     if (sock_icmp < 0) {
@@ -242,7 +251,6 @@ int run_traceroute(AutopathConfig *config, const char *interface) {
         return -1;
     }
     
-    // Set to non-blocking
     int flags = fcntl(sock_icmp, F_GETFL, 0);
     fcntl(sock_icmp, F_SETFL, flags | O_NONBLOCK);
 
@@ -251,7 +259,7 @@ int run_traceroute(AutopathConfig *config, const char *interface) {
         sock_l2 = create_raw_socket_l2(interface);
     }
 
-    // Optimization: Check for local subnet
+    // Local subnet optimization for single-hop traces
     int is_local = 0;
     struct in_addr netmask;
     if (get_local_netmask(interface, &netmask) == 0) {
@@ -285,7 +293,7 @@ int run_traceroute(AutopathConfig *config, const char *interface) {
     ctx.id = getpid() & 0xFFFF;
     ctx.all_hops = all_hops;
     ctx.target_ttl = is_local ? 1 : MAX_HOPS;
-    ctx.show_animation = !config->debug; // Don't show if debug is on
+    ctx.show_animation = !config->debug; 
     pthread_mutex_init(&ctx.mutex, NULL);
     pthread_cond_init(&ctx.cond, NULL);
 
@@ -306,14 +314,14 @@ int run_traceroute(AutopathConfig *config, const char *interface) {
 
         if (ctx.grace_triggered) {
             long grace_elapsed = (now.tv_sec - ctx.dest_reached_time.tv_sec) * 1000 + (now.tv_nsec - ctx.dest_reached_time.tv_nsec) / 1000000;
-            if (grace_elapsed > 400) ctx.done = 1; // 400ms grace for sub-0.6s performance
+            if (grace_elapsed > 400) ctx.done = 1; 
         }
 
-        // Printer Loop: Zero-Lag Wait
+        // Printer Loop: High-performance Zero-Lag wait
         pthread_mutex_lock(&ctx.mutex);
         struct timespec wait_time;
         clock_gettime(CLOCK_REALTIME, &wait_time); 
-        wait_time.tv_nsec += 1000000; // 1ms for micro-latency
+        wait_time.tv_nsec += 1000000; // 1ms sleep interval for micro-latency updates
         if (wait_time.tv_nsec >= 1000000000) {
             wait_time.tv_sec++;
             wait_time.tv_nsec -= 1000000000;
@@ -346,7 +354,6 @@ int run_traceroute(AutopathConfig *config, const char *interface) {
                 if (all_hops[h].reached && config->layer2_enabled && config->use_arp && sock_l2 >= 0) {
                     if (h == 1 || config->repeat) {
                         pthread_mutex_unlock(&ctx.mutex);
-                        // Use last valid IP for L2 resolution
                         uint32_t l2_ip = 0;
                         for (int p = 0; p < config->num_probes; p++) if (all_hops[h].ip_addr[p]) l2_ip = all_hops[h].ip_addr[p];
                         if (l2_ip && resolve_mac_l2(sock_l2, l2_ip, all_hops[h].mac_addr, config, interface) == 0) {
@@ -355,11 +362,9 @@ int run_traceroute(AutopathConfig *config, const char *interface) {
                         pthread_mutex_lock(&ctx.mutex);
                     }
                 }
-                if (ctx.show_animation) printf("\r\033[K"); // Instant clear
+                if (ctx.show_animation) printf("\r\033[K"); 
                 print_hop(&all_hops[h], config);
                 
-                // Removed real-time loop termination - ISP tunnels often have same-IP hops
-                // We only flag visually now to avoid stopping healthy traces.
                 last_printed = h;
                 if (ctx.destination_reached && h >= ctx.target_ttl) {
                     ctx.done = 1;
@@ -373,13 +378,14 @@ int run_traceroute(AutopathConfig *config, const char *interface) {
     }
 
     ctx.done = 1;
-    pthread_cond_broadcast(&ctx.cond); // Wake up everyone for cleanup
+    pthread_cond_broadcast(&ctx.cond);
     pthread_join(sender, NULL);
     pthread_join(receiver, NULL);
     if (ctx.show_animation) pthread_join(animation, NULL);
     pthread_mutex_destroy(&ctx.mutex);
     pthread_cond_destroy(&ctx.cond);
 
+    // Final Path Analytics: Router ARP Table Exploration
     if (config->smart_mode && !ctx.destination_reached) {
         uint32_t last_ip = src_ip;
         for (int i = last_printed; i >= 1; i--) {
@@ -397,10 +403,9 @@ int run_traceroute(AutopathConfig *config, const char *interface) {
             printf("\n--- Smart Mode Analysis ---\n");
             query_router_arp_table(last_ip, dst_ip, config);
         }
-    } else if (!ctx.destination_reached && !ctx.done) {
-        // Only show if not manually stopped
-    }
+    } 
     
+    // Path Breakdown Summary
     if (!ctx.destination_reached) {
         int last_responding_hop = 0;
         for (int i = 1; i <= MAX_HOPS; i++) {
@@ -424,6 +429,9 @@ int run_traceroute(AutopathConfig *config, const char *interface) {
     return 0;
 }
 
+/**
+ * @brief Resolves target MAC address using Layer 2 ARP probes.
+ */
 int resolve_mac_l2(int sock_l2, uint32_t target_ip, uint8_t *mac,
                    AutopathConfig *config, const char *interface) {
     if (sock_l2 < 0 || !config || !interface) return -1;
@@ -432,21 +440,15 @@ int resolve_mac_l2(int sock_l2, uint32_t target_ip, uint8_t *mac,
     uint8_t local_mac[6];
     uint8_t local_ip[4];
 
-    // Get local MAC and IP
-    if (get_local_mac(interface, local_mac) < 0) {
-        return -1;
-    }
+    if (get_local_mac(interface, local_mac) < 0) return -1;
 
     struct in_addr local_ip_addr;
-    if (get_local_ip(interface, &local_ip_addr) < 0) {
-        return -1;
-    }
+    if (get_local_ip(interface, &local_ip_addr) < 0) return -1;
     memcpy(local_ip, &local_ip_addr.s_addr, 4);
 
     uint8_t target_ip_bytes[4];
     memcpy(target_ip_bytes, &target_ip, 4);
 
-    // Build ARP packet
     int pkt_len = build_arp_packet(packet, local_mac, local_ip, 
                                    target_ip_bytes, config->broadcast);
 
@@ -456,29 +458,20 @@ int resolve_mac_l2(int sock_l2, uint32_t target_ip, uint8_t *mac,
         printf("[DEBUG] Sending ARP request for %s\n", ip_str);
     }
 
-    // Send ARP request
-    if (send_raw_l2_packet(sock_l2, packet, pkt_len, interface) < 0) {
-        return -1;
-    }
+    if (send_raw_l2_packet(sock_l2, packet, pkt_len, interface) < 0) return -1;
 
-    // Wait for ARP reply
     struct timeval timeout = {1, 0};
     uint8_t recv_buffer[MAX_PACKET_SIZE];
     
     int recv_len = receive_response(sock_l2, recv_buffer, sizeof(recv_buffer), &timeout);
     
-    if (recv_len <= 0) {
-        return -1; // Timeout
-    }
+    if (recv_len <= 0) return -1;
 
-    // Parse ARP reply
     struct ethhdr *eth = (struct ethhdr *)recv_buffer;
-    if (ntohs(eth->h_proto) != ETH_P_ARP) {
-        return -1;
-    }
+    if (ntohs(eth->h_proto) != ETH_P_ARP) return -1;
 
     struct arp_header *arp = (struct arp_header *)(recv_buffer + sizeof(struct ethhdr));
-    if (ntohs(arp->opcode) == 2) { // ARP Reply
+    if (ntohs(arp->opcode) == 2) { 
         memcpy(mac, arp->sender_mac, 6);
         return 0;
     }
@@ -486,34 +479,9 @@ int resolve_mac_l2(int sock_l2, uint32_t target_ip, uint8_t *mac,
     return -1;
 }
 
-int parse_icmp_response(uint8_t *buffer, int len, uint16_t id, HopInfo *hop) {
-    struct iphdr *ip = (struct iphdr *)buffer;
-    int ip_hdr_len = ip->ihl * 4;
-    
-    if (len < ip_hdr_len + 8) return -1;
-
-    struct icmphdr *icmp = (struct icmphdr *)(buffer + ip_hdr_len);
-    
-    if (icmp->type == ICMP_TIME_EXCEEDED) {
-        hop->ip_addr[0] = ip->saddr;
-        return 1;
-    }
-    
-    if (icmp->type == ICMP_ECHOREPLY) {
-        hop->ip_addr[0] = ip->saddr;
-        return 1;
-    }
-
-    if (icmp->type == ICMP_DEST_UNREACH) {
-        hop->ip_addr[0] = ip->saddr;
-        snprintf(hop->error_msg, sizeof(hop->error_msg), "Unreachable (%d)", icmp->code);
-        return 1;
-    }
-
-    (void)id; // ID verification now handled in receiver thread
-    return 0;
-}
-
+/**
+ * @brief Standardized rendering of hop metrics.
+ */
 void print_hop(HopInfo *hop, AutopathConfig *config) {
     if (hop->hop_num <= 0) return;
 
@@ -529,6 +497,7 @@ void print_hop(HopInfo *hop, AutopathConfig *config) {
         int is_loop = 0;
         for (int i = 0; i < config->num_probes; i++) {
             if (hop->rtt_ms[i] >= 0) {
+                // Visual routing loop detection
                 if (hop->hop_num > 2) {
                     for (int h = 1; h < hop->hop_num - 1; h++) {
                         if (path_history[h] && path_history[h] == hop->ip_addr[i] && path_history[h+1] != hop->ip_addr[i]) {
@@ -554,15 +523,6 @@ void print_hop(HopInfo *hop, AutopathConfig *config) {
         if (hop->error_msg[0]) printf("  %s", hop->error_msg);
     } else {
         for (int i = 0; i < config->num_probes; i++) printf("       *      ");
-        
-        static int break_shown = 0;
-        if (hop->hop_num == 1) break_shown = 0;
-        
-        if (!break_shown && hop->hop_num > 1) {
-             printf(" \033[1;31m[LINK BROKEN]\033[0m");
-             break_shown = 1;
-        }
-        
         if (hop->error_msg[0]) printf("  %s", hop->error_msg);
     }
     printf("\n");

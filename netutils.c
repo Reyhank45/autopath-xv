@@ -1,3 +1,8 @@
+/**
+ * @file netutils.c
+ * @brief Network utility functions for raw socket management and packet construction.
+ */
+
 #include "netutils.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,19 +19,18 @@
 #include <net/ethernet.h>
 #include <errno.h>
 
+/**
+ * @brief Retrieves the hardware MAC address for a given interface.
+ */
 int get_local_mac(const char *interface, uint8_t *mac) {
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock < 0) {
-        perror("socket");
-        return -1;
-    }
+    if (sock < 0) return -1;
 
     struct ifreq ifr;
     memset(&ifr, 0, sizeof(ifr));
     strncpy(ifr.ifr_name, interface, IFNAMSIZ - 1);
 
     if (ioctl(sock, SIOCGIFHWADDR, &ifr) < 0) {
-        perror("ioctl SIOCGIFHWADDR");
         close(sock);
         return -1;
     }
@@ -36,19 +40,18 @@ int get_local_mac(const char *interface, uint8_t *mac) {
     return 0;
 }
 
+/**
+ * @brief Retrieves the local IPv4 address for a given interface.
+ */
 int get_local_ip(const char *interface, struct in_addr *ip) {
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock < 0) {
-        perror("socket");
-        return -1;
-    }
+    if (sock < 0) return -1;
 
     struct ifreq ifr;
     memset(&ifr, 0, sizeof(ifr));
     strncpy(ifr.ifr_name, interface, IFNAMSIZ - 1);
 
     if (ioctl(sock, SIOCGIFADDR, &ifr) < 0) {
-        perror("ioctl SIOCGIFADDR");
         close(sock);
         return -1;
     }
@@ -58,19 +61,18 @@ int get_local_ip(const char *interface, struct in_addr *ip) {
     return 0;
 }
 
+/**
+ * @brief Retrieves the netmask for a given interface.
+ */
 int get_local_netmask(const char *interface, struct in_addr *mask) {
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock < 0) {
-        perror("socket");
-        return -1;
-    }
+    if (sock < 0) return -1;
 
     struct ifreq ifr;
     memset(&ifr, 0, sizeof(ifr));
     strncpy(ifr.ifr_name, interface, IFNAMSIZ - 1);
 
     if (ioctl(sock, SIOCGIFNETMASK, &ifr) < 0) {
-        perror("ioctl SIOCGIFNETMASK");
         close(sock);
         return -1;
     }
@@ -84,27 +86,28 @@ int is_same_subnet(uint32_t ip1, uint32_t ip2, uint32_t mask) {
     return (ip1 & mask) == (ip2 & mask);
 }
 
+/**
+ * @brief Constructs a raw ARP packet.
+ */
 int build_arp_packet(uint8_t *buffer, const uint8_t *src_mac, 
-                     const uint8_t *src_ip, const uint8_t *target_ip,
-                     int is_broadcast) {
+                      const uint8_t *src_ip, const uint8_t *target_ip,
+                      int is_broadcast) {
     struct ethhdr *eth = (struct ethhdr *)buffer;
     struct arp_header *arp = (struct arp_header *)(buffer + sizeof(struct ethhdr));
 
-    // Ethernet header
     memcpy(eth->h_source, src_mac, 6);
     if (is_broadcast) {
         memset(eth->h_dest, 0xff, 6);
     } else {
-        memset(eth->h_dest, 0x00, 6); // Unknown target
+        memset(eth->h_dest, 0x00, 6); 
     }
     eth->h_proto = htons(ETH_P_ARP);
 
-    // ARP header
-    arp->hw_type = htons(1);        // Ethernet
-    arp->proto_type = htons(0x0800); // IPv4
+    arp->hw_type = htons(1);        
+    arp->proto_type = htons(0x0800); 
     arp->hw_addr_len = 6;
     arp->proto_addr_len = 4;
-    arp->opcode = htons(1);          // ARP Request
+    arp->opcode = htons(1);          
 
     memcpy(arp->sender_mac, src_mac, 6);
     memcpy(arp->sender_ip, src_ip, 4);
@@ -116,28 +119,24 @@ int build_arp_packet(uint8_t *buffer, const uint8_t *src_mac,
 
 uint16_t calculate_checksum(uint16_t *buf, int len) {
     uint32_t sum = 0;
-    
     while (len > 1) {
         sum += *buf++;
         len -= 2;
     }
-    
-    if (len == 1) {
-        sum += *(uint8_t *)buf;
-    }
-    
+    if (len == 1) sum += *(uint8_t *)buf;
     sum = (sum >> 16) + (sum & 0xFFFF);
     sum += (sum >> 16);
-    
     return (uint16_t)(~sum);
 }
 
+/**
+ * @brief Constructs a full ICMP Echo packet with custom IP header.
+ */
 int build_icmp_packet(uint8_t *buffer, uint16_t id, uint16_t seq, 
                       uint32_t src_ip, uint32_t dst_ip, uint8_t ttl) {
     struct ip_header *ip = (struct ip_header *)buffer;
     struct icmp_header *icmp = (struct icmp_header *)(buffer + sizeof(struct ip_header));
     
-    // IP header
     ip->version_ihl = 0x45;
     ip->tos = 0;
     ip->total_length = htons(sizeof(struct ip_header) + sizeof(struct icmp_header));
@@ -150,7 +149,6 @@ int build_icmp_packet(uint8_t *buffer, uint16_t id, uint16_t seq,
     ip->dst_addr = dst_ip;
     ip->checksum = calculate_checksum((uint16_t *)ip, sizeof(struct ip_header));
     
-    // ICMP header
     icmp->type = ICMP_ECHO;
     icmp->code = 0;
     icmp->checksum = 0;
@@ -161,21 +159,11 @@ int build_icmp_packet(uint8_t *buffer, uint16_t id, uint16_t seq,
     return sizeof(struct ip_header) + sizeof(struct icmp_header);
 }
 
-int build_icmp_only(uint8_t *buffer, uint16_t id, uint16_t seq) {
-    struct icmp_header *icmp = (struct icmp_header *)buffer;
-    
-    icmp->type = ICMP_ECHO;
-    icmp->code = 0;
-    icmp->checksum = 0;
-    icmp->id = htons(id);
-    icmp->sequence = htons(seq);
-    icmp->checksum = calculate_checksum((uint16_t *)icmp, sizeof(struct icmp_header));
-    
-    return sizeof(struct icmp_header);
-}
-
+/**
+ * @brief Constructs a standard UDP traceroute probe.
+ */
 int build_udp_packet(uint8_t *buffer, uint32_t src_ip, uint32_t dst_ip, 
-                     uint16_t src_port, uint16_t dst_port, uint8_t ttl) {
+                      uint16_t src_port, uint16_t dst_port, uint8_t ttl) {
     struct ip_header *ip = (struct ip_header *)buffer;
     struct {
         uint16_t source;
@@ -184,10 +172,9 @@ int build_udp_packet(uint8_t *buffer, uint32_t src_ip, uint32_t dst_ip,
         uint16_t check;
     } *udp = (void *)(buffer + sizeof(struct ip_header));
 
-    // IP header
     ip->version_ihl = 0x45;
     ip->tos = 0;
-    ip->total_length = htons(60); // Standard traceroute size
+    ip->total_length = htons(60); 
     ip->id = htons(getpid() & 0xFFFF);
     ip->flags_offset = 0;
     ip->ttl = ttl;
@@ -197,52 +184,27 @@ int build_udp_packet(uint8_t *buffer, uint32_t src_ip, uint32_t dst_ip,
     ip->dst_addr = dst_ip;
     ip->checksum = calculate_checksum((uint16_t *)ip, sizeof(struct ip_header));
 
-    // UDP header
     udp->source = htons(src_port);
     udp->dest = htons(dst_port);
     udp->len = htons(60 - sizeof(struct ip_header));
     udp->check = 0;
     
-    // Optional: Fill payload with zeros/data
     memset(buffer + sizeof(struct ip_header) + 8, 0x42, 60 - sizeof(struct ip_header) - 8);
-
     return 60;
 }
 
-void mac_to_string(const uint8_t *mac, char *str) {
-    sprintf(str, "%02x:%02x:%02x:%02x:%02x:%02x",
-            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-}
-
-void ip_to_string(uint32_t ip, char *str) {
-    struct in_addr addr;
-    addr.s_addr = ip;
-    strcpy(str, inet_ntoa(addr));
-}
-
-int parse_ip(const char *ip_str, uint8_t *ip_bytes) {
-    struct in_addr addr;
-    if (inet_pton(AF_INET, ip_str, &addr) != 1) {
-        return -1;
-    }
-    memcpy(ip_bytes, &addr.s_addr, 4);
-    return 0;
-}
-
+/**
+ * @brief Creates a Layer 2 raw packet socket bound to a specific interface.
+ */
 int create_raw_socket_l2(const char *interface) {
     int sock = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
-    if (sock < 0) {
-        perror("socket AF_PACKET");
-        return -1;
-    }
+    if (sock < 0) return -1;
 
-    // Bind to specific interface
     struct ifreq ifr;
     memset(&ifr, 0, sizeof(ifr));
     strncpy(ifr.ifr_name, interface, IFNAMSIZ - 1);
     
     if (ioctl(sock, SIOCGIFINDEX, &ifr) < 0) {
-        perror("ioctl SIOCGIFINDEX");
         close(sock);
         return -1;
     }
@@ -254,7 +216,6 @@ int create_raw_socket_l2(const char *interface) {
     sll.sll_protocol = htons(ETH_P_ALL);
 
     if (bind(sock, (struct sockaddr *)&sll, sizeof(sll)) < 0) {
-        perror("bind AF_PACKET");
         close(sock);
         return -1;
     }
@@ -262,26 +223,22 @@ int create_raw_socket_l2(const char *interface) {
     return sock;
 }
 
+/**
+ * @brief Creates a raw ICMP socket with IP_HDRINCL for precise TTL control.
+ */
 int create_raw_socket_icmp(const char *interface) {
     int sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
-    if (sock < 0) {
-        perror("socket ICMP");
-        return -1;
-    }
+    if (sock < 0) return -1;
 
-    // Bind to specific interface if provided
     if (interface) {
         if (setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, interface, strlen(interface)) < 0) {
-            perror("setsockopt SO_BINDTODEVICE");
             close(sock);
             return -1;
         }
     }
 
-    // Set IP_HDRINCL to include custom IP header for per-packet TTL precision
     int on = 1;
     if (setsockopt(sock, IPPROTO_IP, IP_HDRINCL, &on, sizeof(on)) < 0) {
-        perror("setsockopt IP_HDRINCL");
         close(sock);
         return -1;
     }
@@ -295,10 +252,7 @@ int send_raw_l2_packet(int sock, const uint8_t *packet, size_t len,
     memset(&ifr, 0, sizeof(ifr));
     strncpy(ifr.ifr_name, interface, IFNAMSIZ - 1);
     
-    if (ioctl(sock, SIOCGIFINDEX, &ifr) < 0) {
-        perror("ioctl");
-        return -1;
-    }
+    if (ioctl(sock, SIOCGIFINDEX, &ifr) < 0) return -1;
 
     struct sockaddr_ll addr;
     memset(&addr, 0, sizeof(addr));
@@ -306,67 +260,50 @@ int send_raw_l2_packet(int sock, const uint8_t *packet, size_t len,
     addr.sll_ifindex = ifr.ifr_ifindex;
     addr.sll_halen = ETH_ALEN;
     
-    if (sendto(sock, packet, len, 0, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        perror("sendto");
-        return -1;
-    }
-
+    if (sendto(sock, packet, len, 0, (struct sockaddr *)&addr, sizeof(addr)) < 0) return -1;
     return 0;
 }
 
 int receive_response(int sock, uint8_t *buffer, size_t len, 
-                     struct timeval *timeout) {
+                      struct timeval *timeout) {
     fd_set readfds;
     FD_ZERO(&readfds);
     FD_SET(sock, &readfds);
 
     int ret = select(sock + 1, &readfds, NULL, NULL, timeout);
-    if (ret < 0) {
-        perror("select");
-        return -1;
-    } else if (ret == 0) {
-        return 0; // Timeout
-    }
+    if (ret <= 0) return ret; 
 
     ssize_t recv_len = recvfrom(sock, buffer, len, 0, NULL, NULL);
-    if (recv_len < 0) {
-        perror("recvfrom");
-        return -1;
-    }
-
-    return recv_len;
+    return (int)recv_len;
 }
 
+/**
+ * @brief Identifies the system's preferred default route interface.
+ * Prioritizes physical hardware over virtual/loopback interfaces.
+ */
 int get_default_interface(char *iface, size_t len) {
     FILE *fp = fopen("/proc/net/route", "r");
-    if (!fp) {
-        perror("fopen /proc/net/route");
-        return -1;
-    }
+    if (!fp) return -1;
 
     char line[256];
     char iface_name[16];
     unsigned long dest, gateway, flags, mask;
     int found = 0;
 
-    // Skip header line
     if (fgets(line, sizeof(line), fp) == NULL) {
         fclose(fp);
         return -1;
     }
 
-    // Find default route (destination = 00000000)
-    // Priority: Physical hardware > virtual/lo
     char fallback_iface[16] = "";
     while (fgets(line, sizeof(line), fp)) {
         int matches = sscanf(line, "%15s %lx %lx %lx %*d %*d %*d %lx",
                            iface_name, &dest, &gateway, &flags, &mask);
         
         if (matches >= 4 && dest == 0) {
-            // Found a default route
             if (strcmp(iface_name, "lo") == 0) {
                 if (fallback_iface[0] == '\0') strcpy(fallback_iface, iface_name);
-                continue; // Keep looking for a non-lo interface
+                continue; 
             }
             strncpy(iface, iface_name, len - 1);
             iface[len - 1] = '\0';
@@ -385,6 +322,10 @@ int get_default_interface(char *iface, size_t len) {
     return found ? 0 : -1;
 }
 
+/**
+ * @brief Enumerates all active network interfaces for Path Auditing.
+ * Returns a list prioritized by hardware vs loopback status.
+ */
 int get_all_interfaces(char interfaces[][16], int max_ifaces) {
     FILE *fp = fopen("/proc/net/dev", "r");
     if (!fp) return -1;
@@ -393,7 +334,6 @@ int get_all_interfaces(char interfaces[][16], int max_ifaces) {
     int count = 0;
     int has_lo = 0;
 
-    // Skip first two header lines
     fgets(line, sizeof(line), fp);
     fgets(line, sizeof(line), fp);
 
@@ -411,17 +351,15 @@ int get_all_interfaces(char interfaces[][16], int max_ifaces) {
                 
                 if (strcmp(ifname, "lo") == 0) {
                     has_lo = 1;
-                    continue; // lo added later to ensure hardware priority
+                    continue; 
                 }
 
-                strncpy(interfaces[count], ifname, 15);
-                interfaces[count][15] = '\0';
+                snprintf(interfaces[count], 16, "%s", ifname);
                 count++;
             }
         }
     }
 
-    // Add Loopback at the end for auditing
     if (has_lo && count < max_ifaces) {
         strcpy(interfaces[count], "lo");
         count++;

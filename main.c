@@ -1,3 +1,12 @@
+/**
+ * @file main.c
+ * @brief Entry point for autopath-xv advanced network discovery tool.
+ * 
+ * autopath-xv is a high-performance network diagnostic tool that bridges 
+ * the gap between Layer 3 traceroute and Layer 2 link-layer analysis.
+ * It is designed for sub-second, network-latency-bound execution.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,8 +17,9 @@
 
 #define VERSION "1.0.0"
 
-
-
+/**
+ * @brief Print command-line usage information.
+ */
 void print_usage(const char *prog_name) {
     printf("Usage: %s [OPTIONS] -ipv4 <target_ip>\n\n", prog_name);
     printf("autopath-xv - Advanced network path discovery tool\n");
@@ -44,7 +54,7 @@ void print_usage(const char *prog_name) {
     printf("  - Smart mode (-xv) will attempt SNMP queries to routers\n");
     printf("  - Layer 2 mode shows MAC addresses at each hop\n\n");
     
-    printf("Report bugs to: https://github.com/yourusername/autopath-xv\n");
+    printf("Report bugs to: https://github.com/reyhank45/autopath-xv\n");
 }
 
 void print_version(void) {
@@ -65,7 +75,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
-    // Simple command line parser
+    // Command line argument parser
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-help") == 0) {
             print_usage(argv[0]);
@@ -103,14 +113,14 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // Validate required arguments
+    // Target IP is the only strictly required parameter
     if (config.target_ip[0] == '\0') {
         fprintf(stderr, "Error: Target IP address is required (-ipv4 <ip>)\n\n");
         print_usage(argv[0]);
         return 1;
     }
 
-    // Auto-detect interface or Shotgun mode
+    // Path Audit: Auto-detection of network interfaces and reachability check
     char interfaces[16][16];
     int iface_count = 0;
     char target_iface[16] = "";
@@ -122,23 +132,41 @@ int main(int argc, char *argv[]) {
             return 1;
         }
 
+        char system_default[16] = "";
+        get_default_interface(system_default, sizeof(system_default));
+
         printf(" \033[1;36m[*]\033[0m Path Audit: Probing %d candidate interfaces...\n", iface_count);
         
         for (int i = 0; i < iface_count; i++) {
+            int is_default = (system_default[0] != '\0' && strcmp(interfaces[i], system_default) == 0);
+            
+            // Explicitly flag and bypass loopback traps (local routing redirects)
             if (strcmp(interfaces[i], "lo") == 0) {
-                printf("  \033[1;31m[!]\033[0m Interface lo: \033[1;31mFAILED\033[0m (Loopback trap/redirect detected)\n");
+                printf("  \033[1;31m[!]\033[0m Interface lo: \033[1;31mFAILED\033[0m (Loopback trap/redirect detected");
+                if (is_default) printf(" - \033[1;31mSYSTEM DEFAULT\033[0m");
+                printf(")\n");
                 continue;
             }
 
+            // Test hardware interface by attempting to open a raw socket
             int test_sock = create_raw_socket_icmp(interfaces[i]);
             if (test_sock < 0) {
-                printf("  \033[1;31m[!]\033[0m Interface %s: \033[1;31mFAILED\033[0m (Socket creation failed - Check connection)\n", interfaces[i]);
+                printf("  \033[1;31m[!]\033[0m Interface %s: \033[1;31mFAILED\033[0m (Socket creation failed", interfaces[i]);
+                if (is_default) printf(" - \033[1;31mSYSTEM DEFAULT\033[0m");
+                printf(")\n");
                 continue;
             }
             close(test_sock);
 
-            printf("  \033[1;32m[+]\033[0m Interface %s: \033[1;32mSUCCESS\033[0m (Hardware path active)\n", interfaces[i]);
-            if (target_iface[0] == '\0') strncpy(target_iface, interfaces[i], 15);
+            printf("  \033[1;32m[+]\033[0m Interface %s: \033[1;32mSUCCESS\033[0m (Hardware path active", interfaces[i]);
+            if (is_default) printf(" - \033[1;32mSYSTEM DEFAULT\033[0m");
+            printf(")\n");
+
+            // Select the first working hardware interface if one isn't specified
+            if (target_iface[0] == '\0') {
+                strncpy(target_iface, interfaces[i], sizeof(target_iface) - 1);
+                target_iface[sizeof(target_iface) - 1] = '\0';
+            }
         }
         
         if (target_iface[0] == '\0') {
@@ -147,12 +175,12 @@ int main(int argc, char *argv[]) {
         }
         printf(" \033[1;36m[*]\033[0m Using \033[1;32m%s\033[0m for trace.\n", target_iface);
     } else {
-        strncpy(target_iface, interface, 15);
+        snprintf(target_iface, sizeof(target_iface), "%s", interface);
     }
 
-    // Check if running as root
+    // Privilege check: Raw socket operations require CAP_NET_RAW or root
     if (geteuid() != 0) {
-        fprintf(stderr, "Warning: This program requires root privileges or CAP_NET_RAW capability\n");
+        fprintf(stderr, "\nWarning: This program requires root privileges or CAP_NET_RAW capability\n");
         fprintf(stderr, "Try: sudo %s or sudo setcap cap_net_raw+ep %s\n\n", argv[0], argv[0]);
     }
 
@@ -162,7 +190,7 @@ int main(int argc, char *argv[]) {
         printf("[DEBUG] Target: %s\n", config.target_ip);
     }
     
-    // Run the traceroute
+    // Execute the core traceroute engine
     int result = run_traceroute(&config, target_iface);
     
     if (result < 0) {
