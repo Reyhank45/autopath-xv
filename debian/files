@@ -1,0 +1,3 @@
+autopath-xv-dbgsym_1.0.0-1_amd64.deb debug optional automatic=yes
+autopath-xv_1.0.0-1_amd64.buildinfo net optional
+autopath-xv_1.0.0-1_amd64.deb net optional

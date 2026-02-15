@@ -1,0 +1,26 @@
+Source: autopath-xv
+Section: net
+Priority: optional
+Maintainer: Your Name <wiratamareyhan85@gmail.com>
+Build-Depends: debhelper-compat (= 13), gcc, make
+Standards-Version: 4.6.0
+Homepage: https://github.com/reyhank45/autopath-xv
+
+Package: autopath-xv
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, libsnmp40
+Recommends: libcap2-bin
+Suggests: snmpd
+Description: Advanced network path discovery tool
+ autopath-xv is an advanced network path discovery tool that combines
+ Layer 3 traceroute with Layer 2 MAC-level path tracing.
+ .
+ Features:
+  - Traditional ICMP-based traceroute functionality
+  - Layer 2 MAC address resolution via ARP
+  - Smart mode for querying router ARP tables
+  - Broadcast ARP support
+  - Debug mode for detailed packet analysis
+  - Detection of invalid and missing routes
+ .
+ The tool requires either root privileges or CAP_NET_RAW capability.
