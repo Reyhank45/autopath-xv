@@ -1,0 +1,125 @@
+.TH AUTOPATH-XV 1 "February 2026" "autopath-xv 1.0.0" "User Commands"
+.SH NAME
+autopath-xv \- Advanced network path discovery tool combining Layer 3 traceroute with Layer 2 MAC-level path tracing
+.SH SYNOPSIS
+.B autopath-xv
+[\fIOPTIONS\fR] \fB-ipv4\fR \fI<target_ip>\fR
+.SH DESCRIPTION
+.B autopath-xv
+is an advanced network path discovery tool that extends traditional traceroute functionality by adding Layer 2 (MAC address) path discovery, ARP probing, and smart mode features for detecting invalid routes and missing routes.
+
+Unlike standard traceroute which only shows Layer 3 (IP) hops,
+.B autopath-xv
+can reveal the complete path including MAC addresses at each hop, identify routing inconsistencies, and query router ARP tables to troubleshoot unreachable destinations.
+
+.SH OPTIONS
+.TP
+.BR \-ipv4 " \fI<ip>\fR"
+Target IPv4 address to trace (REQUIRED). Specifies the destination IP address for the path discovery.
+.TP
+.BR \-a
+Use ARP for Layer 2 MAC address resolution. When enabled, the tool will send ARP requests to resolve MAC addresses at each hop.
+.TP
+.BR \-l2
+Enable Layer 2 probing. Activates MAC address discovery and Layer 2 path analysis.
+.TP
+.BR \-b
+Use broadcast for ARP requests. Sends ARP requests to the broadcast MAC address (ff:ff:ff:ff:ff:ff).
+.TP
+.BR \-xv
+Smart advanced mode. When a hop becomes unreachable, the tool will attempt to query the last reachable router's ARP table via SNMP to discover potential routing issues.
+.TP
+.BR \-d
+Enable debug output. Prints detailed information about packet sending, receiving, and internal operations.
+.TP
+.BR \-i " \fI<interface>\fR"
+Network interface to use (default: eth0). Specifies which network interface to use for sending and receiving packets.
+.TP
+.BR \-\-help ", " \-help
+Display help message and exit.
+.TP
+.BR \-\-version
+Display version information and exit.
+
+.SH EXAMPLES
+.PP
+Basic traceroute to Google DNS:
+.RS
+autopath-xv -ipv4 8.8.8.8
+.RE
+
+.PP
+Traceroute with Layer 2 MAC discovery via ARP:
+.RS
+autopath-xv -a -l2 -ipv4 10.0.0.1
+.RE
+
+.PP
+Full featured mode with broadcast ARP, smart mode, and debug output:
+.RS
+autopath-xv -a -d -b -xv -l2 -ipv4 192.168.1.1
+.RE
+
+.PP
+Using a specific interface:
+.RS
+autopath-xv -i wlan0 -a -l2 -ipv4 10.0.0.1
+.RE
+
+.SH TECHNICAL DETAILS
+.B autopath-xv
+uses raw sockets to craft and send custom ICMP packets with incrementing TTL values to discover network hops. It can optionally send ARP requests at each hop to resolve MAC addresses, providing Layer 2 visibility.
+
+The tool operates by:
+.IP \[bu] 2
+Sending ICMP Echo Request packets with increasing TTL values
+.IP \[bu]
+Listening for ICMP Time Exceeded messages from intermediate routers
+.IP \[bu]
+Optionally sending ARP requests to resolve MAC addresses at each hop
+.IP \[bu]
+In smart mode, querying router ARP tables via SNMP when routes fail
+
+.SH REQUIREMENTS
+.B autopath-xv
+requires either root privileges or the CAP_NET_RAW capability to create raw sockets.
+
+To run without root:
+.RS
+sudo setcap cap_net_raw+ep /usr/local/bin/autopath-xv
+.RE
+
+.SH RETURN VALUES
+.TP
+.B 0
+Success - traceroute completed
+.TP
+.B 1
+Error - invalid arguments, insufficient privileges, or traceroute failed
+
+.SH NOTES
+.IP \[bu] 2
+Layer 2 probing requires the target or intermediate hops to be on the same local network segment
+.IP \[bu]
+Smart mode (-xv) requires SNMP access to intermediate routers
+.IP \[bu]
+Some routers may rate-limit or block ICMP traffic
+.IP \[bu]
+Firewalls may interfere with ARP or ICMP packets
+
+.SH SEE ALSO
+.BR traceroute (8),
+.BR ping (8),
+.BR arp (8),
+.BR tcpdump (8)
+
+.SH BUGS
+Report bugs to: https://github.com/yourusername/autopath-xv/issues
+
+.SH AUTHOR
+Written for advanced network troubleshooting and path analysis.
+
+.SH COPYRIGHT
+Copyright \(co 2026. Licensed under GPL v3.
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.

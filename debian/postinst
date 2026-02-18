@@ -1,0 +1,16 @@
+#!/bin/bash
+set -e
+
+if [ "$1" = "configure" ]; then
+    # Set capabilities for raw socket access
+    if command -v setcap >/dev/null 2>&1; then
+        setcap cap_net_raw+ep /usr/bin/autopath-xv || true
+        echo "Set CAP_NET_RAW capability on /usr/bin/autopath-xv"
+    else
+        echo "Warning: setcap not found, autopath-xv will require sudo"
+    fi
+fi
+
+#DEBHELPER#
+
+exit 0

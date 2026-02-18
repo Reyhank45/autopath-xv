@@ -1,0 +1,14 @@
+#!/usr/bin/make -f
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+%:
+	dh $@
+
+override_dh_auto_install:
+	$(MAKE) DESTDIR=$$(pwd)/debian/autopath-xv PREFIX=/usr install
+
+override_dh_fixperms:
+	dh_fixperms
+	# Set capabilities for raw socket access
+	chmod 0755 debian/autopath-xv/usr/bin/autopath-xv
