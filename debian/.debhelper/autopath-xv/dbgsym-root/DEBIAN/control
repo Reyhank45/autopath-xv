@@ -1,0 +1,12 @@
+Package: autopath-xv-dbgsym
+Source: autopath-xv
+Version: 1.0.0-1
+Auto-Built-Package: debug-symbols
+Architecture: amd64
+Maintainer: Your Name <wiratamareyhan85@gmail.com>
+Installed-Size: 28
+Depends: autopath-xv (= 1.0.0-1)
+Section: debug
+Priority: optional
+Description: debug symbols for autopath-xv
+Build-Ids: 7bed63fda399d24d5694c4b226e1ddfc4368de59

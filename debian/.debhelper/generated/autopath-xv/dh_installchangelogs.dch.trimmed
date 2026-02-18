@@ -1,0 +1,9 @@
+autopath-xv (1.0.0-1) kali-rolling; urgency=medium
+
+  * Initial release (Closes: #1)
+  * Layer 3 ICMP traceroute functionality
+  * Layer 2 ARP MAC address resolution
+  * Smart mode with router ARP table queries
+  * Comprehensive man page and help documentation
+
+ -- Your Name <wiratamareyhan85@gmail.com>  Sun, 15 Feb 2026 04:30:00 -0600
