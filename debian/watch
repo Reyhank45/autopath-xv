@@ -1,4 +1,4 @@
 version=4
 opts=filenamemangle=s/.*\/v?(\d[\d\.]*)\.tar\.gz/autopath-xv-$1.tar.gz/ \
-  https://github.com/reyhank45/autopath-xv/tags \
+  https://github.com/Reyhank45/autopath-xv/tags \
   (?:.*/)?v?(\d[\d\.]*)\.tar\.gz
